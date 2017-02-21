@@ -137,9 +137,34 @@ class CRB(object):
                             pair = HitPair(hit1,hit2)
                             if pair not in exclude_pairs and pair not in pairs:
                                 pairs.add(pair)
-                                #print pair
         return pairs
 
+class HitList(object):
+    def __init__(self):
+        self.reciprocal_pair = None
+        self.crb_pairs = []
+    def _get_query(self):
+        if self.reciprocal_pair is not None:
+            return self.reciprocal_pair.hit1.qname
+        elif len(self.crb_pairs):
+            return self.crb_pairs[0].hit1.qname
+        else:
+            return ''
+    query = property(_get_query)
+
+    def all(self):
+        if self.reciprocal_pair is not None:
+            return [self.reciprocal_pair] + self.crb_pairs
+        else:
+            return self.crb_pairs
+
+    def __str__(self):
+        result = '%s\t' % self.query
+        if self.reciprocal_pair is not None:
+            result += self.reciprocal_pair.hit1.sname
+        if len(self.crb_pairs):
+            result += '\t' + '\t'.join(pair.hit1.sname for pair in self.crb_pairs)
+        return result
 
 class RBH(object):
     def __init__(self):
@@ -148,7 +173,7 @@ class RBH(object):
         self.blast2 = self.qualifying_hits(self.args.BLAST_FILE2)
 
     def run(self):
-        reciprocal_hits = set()
+        orthologs = collections.defaultdict(HitList)
         for qname in sorted(self.blast1.keys()):
             hits = self.blast1[qname]
             for winner in hits.winners:
@@ -156,18 +181,32 @@ class RBH(object):
                 if winner.sname in self.blast2:
                     for rwinner in self.blast2[rname].winners:
                         if self.process_name(rwinner.sname) == qname:
-                            reciprocal_hits.add(HitPair(winner,rwinner))
+                            orthologs[qname].reciprocal_pair = HitPair(winner,rwinner)
         if self.args.crb:
+            reciprocal_hits = set(ortholog.reciprocal_pair for ortholog in orthologs.values())
             crb_finder = CRB(reciprocal_hits)
             crb_pairs = crb_finder.get_crb(self.blast1,self.blast2,reciprocal_hits)
-        orthologs = collections.defaultdict(list)
-        for pair in crb_pairs.union(reciprocal_hits):
-            orthologs[pair.hit1.qname].append(pair.hit2.qname)
+            for pair in crb_pairs:
+                orthologs[pair.hit1.qname].crb_pairs.append(pair)
 
-        for qname,hits in orthologs.items():
-            print '%s: %s' % (qname,','.join(hits))
+        if self.args.target_list1:
+            orthologs = {q:hl for q,hl in orthologs.items() 
+                         if q in self.args.target_list1}
+        if self.args.target_list2:
+            orthologs = {q:hl for q,hl in orthologs.items()
+                         if any(hit_pair.hit2.qname in self.args.target_list2
+                               for hit_pair in hl.all()) }
+            # XXX: filtering out the list should be more elegant than this
+            for hit_list in orthologs.values():
+                if hit_list.reciprocal_pair is not None and \
+                   hit_list.reciprocal_pair.hit2.qname \
+                   not in self.args.target_list2:
+                    hit_list.reciprocal_pair = None
+                hit_list.crb_pairs = [
+                    hit_pair for hit_pair in hit_list.crb_pairs
+                    if hit_pair.hit2.qname in self.args.target_list2]
 
-        #print '\n'.join(str(x) for x in reciprocal_hits)
+        print '\n'.join(str(x) for x in orthologs.values())
         return 
 
     def parse_args(self):
@@ -176,6 +215,7 @@ class RBH(object):
             output of queries whole proteomes. Expected inputs are NCBI-BLAST
             tables. For best results, use the option -outfmt "6 std qcov qlen
             slen"''')
+        listfile = lambda fn: [l.strip() for l in open(fn)]
         parser.add_argument('BLAST_FILE1')
         parser.add_argument('BLAST_FILE2')
         parser.add_argument('--max-evalue',metavar='E',type=float,default=1e-5,
@@ -184,6 +224,12 @@ class RBH(object):
                             help='minimum query coverage per hit [default: 0]')
         parser.add_argument('--crb',action='store_true',
                             help='Add conditional best reciprocal blast hits')
+        parser.add_argument('--target-list1',metavar='LIST',type=listfile,
+                           help='''Output hits containing queries from
+                           BLAST_FILE1 in this list''')
+        parser.add_argument('--target-list2',metavar='LIST',type=listfile,
+                           help='''Output hits containing queries from
+                           BLAST_FILE2 in this list''')
         # XXX: this does not increase RBH and is not implemented in CRB so 
         # for now we will exclude this
         #parser.add_argument('--trinity-gene-prefix',metavar='PREFIX',
@@ -197,10 +243,14 @@ class RBH(object):
             if line.startswith('#'):
                 continue
             fields = line.split()
-            if len(fields) < 12 or len(fields) > 13:
+            if len(fields) < 12 or len(fields) > 15:
                 raise ValueError, 'Could not parse BLAST hit on line %d of %s' % (
                     lineno,file)
-            yield Hit(*fields)
+            try:
+                yield Hit(*fields)
+            except:
+                print fields
+                raise
 
     def qualifying_hit(self, hit):
         if hit.evalue <= self.args.max_evalue and \
