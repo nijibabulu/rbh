@@ -1,5 +1,6 @@
 #! /usr/bin/env python
 
+import sys
 import math
 import itertools
 import collections
@@ -91,22 +92,33 @@ class CRBFitting(dict):
         return self[length] <= CRB.transform_evalue(hit.evalue)
     
 class CRB(object):
-    MIN_EVALUE=1e-200
-    def __init__(self,rbh):
-        self.fitting1 = self.get_fitting([pair.hit1 for pair in rbh])
-        self.fitting2 = self.get_fitting([pair.hit2 for pair in rbh])
+    MIN_EVALUE=sys.float_info.min
+    def __init__(self,rbh,output_training=None,output_fitting_data=None,output_fitting=None):
+        CRB.MIN_EVALUE = min(hit.evalue for hit in
+                             itertools.chain((pair.hit1 for pair in rbh),
+                                             (pair.hit2 for pair in rbh))
+                             if hit.evalue > 0.0)
+        self.fitting1 = self.get_fitting([pair.hit1 for pair in rbh],
+                                         output_training,output_fitting_data,output_fitting)
+        self.fitting2 = self.get_fitting([pair.hit2 for pair in rbh])#,
+                                         #output_training,output_fitting)
     
     @classmethod
     def transform_evalue(cls,evalue):
         return -1*math.log(evalue or CRB.MIN_EVALUE,10)
 
-    def get_fitting(self,training_hits):
+    def get_fitting(self,training_hits,output_training=None,output_fitting_data=None,output_fitting=None):
         lengths = [h.length for h in training_hits]
         shortest_hit = min(lengths)
         longest_hit = max(lengths)
         evalue_dict = collections.defaultdict(list)
         for hit in training_hits:
-            evalue_dict[hit.length].append(CRB.transform_evalue(hit.evalue))
+            transformed_evalue = CRB.transform_evalue(hit.evalue)
+            evalue_dict[hit.length].append(transformed_evalue)
+            if output_training is not None:
+                output_training.write("%d\t%.3f\n" %
+                                      (hit.length,transformed_evalue))
+
         fitting = CRBFitting()
         for l in range(shortest_hit,longest_hit+1):
             flank_len = int(max(l*.1,5))
@@ -116,6 +128,9 @@ class CRB(object):
                 if l+flank in evalue_dict:
                     evalues += sum(evalue_dict[l+flank])
                     count += len(evalue_dict[l+flank])
+                    if output_fitting_data is not None:
+                        for evalue in evalue_dict[l+flank]:
+                            output_fitting_data.write("%d\t%.3f\n" % (l,evalue))
             if count:
                 evalue_mean = evalues/count
                 fitting[l] = evalue_mean
@@ -124,6 +139,10 @@ class CRB(object):
                     fitting[l] = fitting[l-1]
         for l in range(shortest_hit):
             fitting[l] = fitting[shortest_hit]
+        if output_fitting is not None:
+            for l in range(longest_hit+1):
+                output_fitting.write('%d\t%.3f\n' % (l,fitting[l]))
+
 
         return fitting
 
@@ -184,7 +203,10 @@ class RBH(object):
                             orthologs[qname].reciprocal_pair = HitPair(winner,rwinner)
         if self.args.crb:
             reciprocal_hits = set(ortholog.reciprocal_pair for ortholog in orthologs.values())
-            crb_finder = CRB(reciprocal_hits)
+            crb_finder = CRB(reciprocal_hits,
+                             self.args.output_evalue_table,
+                             self.args.output_fit_table,
+                             self.args.output_fit_values)
             crb_pairs = crb_finder.get_crb(self.blast1,self.blast2,reciprocal_hits)
             for pair in crb_pairs:
                 orthologs[pair.hit1.qname].crb_pairs.append(pair)
@@ -213,8 +235,7 @@ class RBH(object):
         parser = argparse.ArgumentParser(
             description='''Find reciprocal best BLAST hits based on BLAST 
             output of queries whole proteomes. Expected inputs are NCBI-BLAST
-            tables. For best results, use the option -outfmt "6 std qcov qlen
-            slen"''')
+            tables.''')
         listfile = lambda fn: [l.strip() for l in open(fn)]
         parser.add_argument('BLAST_FILE1')
         parser.add_argument('BLAST_FILE2')
@@ -230,6 +251,18 @@ class RBH(object):
         parser.add_argument('--target-list2',metavar='LIST',type=listfile,
                            help='''Output hits containing queries from
                            BLAST_FILE2 in this list''')
+        parser.add_argument('--output-evalue-table',metavar='TAB',
+                            type=argparse.FileType('w'),help='''Output all
+                            evalue and length values used for training the CRB
+                            hits''')
+        parser.add_argument('--output-fit-table',metavar='TAB',
+                            type=argparse.FileType('w'),help='''Output all
+                            training data including data re-binned into
+                            neighboring length categories.''')
+        parser.add_argument('--output-fit-values',metavar='VAL',
+                            type=argparse.FileType('w'),help='''Output fitting
+                            function''')
+
         # XXX: this does not increase RBH and is not implemented in CRB so 
         # for now we will exclude this
         #parser.add_argument('--trinity-gene-prefix',metavar='PREFIX',
