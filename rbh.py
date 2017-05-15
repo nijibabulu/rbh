@@ -89,7 +89,7 @@ class HitPair(object):
 class CRBFitting(dict):
     def check(self,hit):
         length = min(hit.length,len(self)-1)
-        return self[length] <= CRB.transform_evalue(hit.evalue)
+        return self[length] <= CRB.transform_evalue(hit.bitscore)
     
 class CRB(object):
     MIN_EVALUE=sys.float_info.min
@@ -105,6 +105,7 @@ class CRB(object):
     
     @classmethod
     def transform_evalue(cls,evalue):
+        return float(evalue)
         return -1*math.log(evalue or CRB.MIN_EVALUE,10)
 
     def get_fitting(self,training_hits,output_training=None,output_fitting_data=None,output_fitting=None):
@@ -113,7 +114,7 @@ class CRB(object):
         longest_hit = max(lengths)
         evalue_dict = collections.defaultdict(list)
         for hit in training_hits:
-            transformed_evalue = CRB.transform_evalue(hit.evalue)
+            transformed_evalue = CRB.transform_evalue(hit.bitscore)
             evalue_dict[hit.length].append(transformed_evalue)
             if output_training is not None:
                 output_training.write("%d\t%.3f\n" %
@@ -121,7 +122,7 @@ class CRB(object):
 
         fitting = CRBFitting()
         for l in range(shortest_hit,longest_hit+1):
-            flank_len = int(max(l*.1,5))
+            flank_len = int(min(100,max(l*.1,5)))
             evalues = 0.
             count = 0
             for flank in range(-flank_len,flank_len+1):
@@ -201,8 +202,12 @@ class RBH(object):
                     for rwinner in self.blast2[rname].winners:
                         if self.process_name(rwinner.sname) == qname:
                             orthologs[qname].reciprocal_pair = HitPair(winner,rwinner)
+        reciprocal_hits = set(ortholog.reciprocal_pair for ortholog in orthologs.values())
+        for hp in reciprocal_hits:
+            print hp.hit1, hp.hit2
         if self.args.crb:
             reciprocal_hits = set(ortholog.reciprocal_pair for ortholog in orthologs.values())
+                
             crb_finder = CRB(reciprocal_hits,
                              self.args.output_evalue_table,
                              self.args.output_fit_table,
