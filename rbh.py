@@ -202,9 +202,7 @@ class RBH(object):
                     for rwinner in self.blast2[rname].winners:
                         if self.process_name(rwinner.sname) == qname:
                             orthologs[qname].reciprocal_pair = HitPair(winner,rwinner)
-        reciprocal_hits = set(ortholog.reciprocal_pair for ortholog in orthologs.values())
-        for hp in reciprocal_hits:
-            print hp.hit1, hp.hit2
+
         if self.args.crb:
             reciprocal_hits = set(ortholog.reciprocal_pair for ortholog in orthologs.values())
                 
@@ -216,24 +214,43 @@ class RBH(object):
             for pair in crb_pairs:
                 orthologs[pair.hit1.qname].crb_pairs.append(pair)
 
-        if self.args.target_list1:
-            orthologs = {q:hl for q,hl in orthologs.items() 
-                         if q in self.args.target_list1}
-        if self.args.target_list2:
-            orthologs = {q:hl for q,hl in orthologs.items()
-                         if any(hit_pair.hit2.qname in self.args.target_list2
-                               for hit_pair in hl.all()) }
-            # XXX: filtering out the list should be more elegant than this
-            for hit_list in orthologs.values():
-                if hit_list.reciprocal_pair is not None and \
-                   hit_list.reciprocal_pair.hit2.qname \
-                   not in self.args.target_list2:
-                    hit_list.reciprocal_pair = None
-                hit_list.crb_pairs = [
-                    hit_pair for hit_pair in hit_list.crb_pairs
-                    if hit_pair.hit2.qname in self.args.target_list2]
-
-        print '\n'.join(str(x) for x in orthologs.values())
+        if self.args.target_list1 or self.args.target_list2:
+            if self.args.target_list1:
+                list1_orthologs = {q:hl for q,hl in orthologs.items() 
+                                   if q in self.args.target_list1}
+            else:
+                list1_orthologs = dict(orthologs)
+            if self.args.target_list2:
+                list2_orthologs = {q:hl for q,hl in orthologs.items()
+                                   if any(hit_pair.hit2.qname in self.args.target_list2
+                                          for hit_pair in hl.all()) }
+                # XXX: filtering out the list should be more elegant than this
+                for hit_list in list2_orthologs.values():
+                    if hit_list.reciprocal_pair is not None and \
+                       hit_list.reciprocal_pair.hit2.qname \
+                       not in self.args.target_list2:
+                        hit_list.reciprocal_pair = None
+                    hit_list.crb_pairs = [
+                        hit_pair for hit_pair in hit_list.crb_pairs
+                        if hit_pair.hit2.qname in self.args.target_list2]
+            else:
+                list2_orthologs = dict(orthologs)
+            print len(list1_orthologs), len(list2_orthologs)
+            # XXX: This should also be cleaned up!
+            if self.args.target_list1 and self.args.target_list2:
+                if self.args.target_list_intersection:
+                    ortholog_set = set(list1_orthologs.values()).intersection(
+                        list2_orthologs.values())
+                else:
+                    ortholog_set = set(list1_orthologs.values()).union(
+                        list2_orthologs.values())
+            else:
+                ortholog_set = set(list1_orthologs.values()).intersection(
+                        list2_orthologs.values())
+        else:
+            ortholog_set = set(orthologs.values())
+            
+        print '\n'.join(str(x) for x in ortholog_set)
         return 
 
     def parse_args(self):
@@ -250,6 +267,10 @@ class RBH(object):
                             help='minimum query coverage per hit [default: 0]')
         parser.add_argument('--crb',action='store_true',
                             help='Add conditional best reciprocal blast hits')
+        parser.add_argument('--target-list-intersection',action='store_true',
+                            help='''Report the intersection of the
+                            riciprocal/conditional target hits lists rather 
+                            than the union''')
         parser.add_argument('--target-list1',metavar='LIST',type=listfile,
                            help='''Output hits containing queries from
                            BLAST_FILE1 in this list''')
