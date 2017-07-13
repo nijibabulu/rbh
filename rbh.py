@@ -235,7 +235,7 @@ class RBH(object):
                         if hit_pair.hit2.qname in self.args.target_list2]
             else:
                 list2_orthologs = dict(orthologs)
-            print len(list1_orthologs), len(list2_orthologs)
+            #print len(list1_orthologs), len(list2_orthologs)
             # XXX: This should also be cleaned up!
             if self.args.target_list1 and self.args.target_list2:
                 if self.args.target_list_intersection:
