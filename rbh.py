@@ -265,6 +265,8 @@ class RBH(object):
             summary.b.rbh_genes.update(ortholog.reciprocal_group.b)
             summary.a.crb_genes.update(ortholog.crb_group.a)
             summary.b.crb_genes.update(ortholog.crb_group.b)
+        summary.a.crb_genes.difference_update(summary.a.rbh_genes)
+        summary.b.crb_genes.difference_update(summary.b.rbh_genes)
         return summary
 
     def _get_rbh(self):
