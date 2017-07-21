@@ -6,6 +6,9 @@ import itertools
 import collections
 import argparse
 
+# TODO: incorporate metric option to use either bitscore or evalue.
+# TODO: bitscore can be approximated with a robust linear fit (eventually also
+# for evalues)
 class Hit(object):
     def __init__(self,qname,sname,pctid,length,mismatches,ngaps,
                  qstart,qend,sstart,send,evalue,bitscore,
@@ -48,7 +51,7 @@ class Hit(object):
 class HitGroup(object):
     def __init__(self):
         self._hits = []
-        self._winners = []
+        self._best_hits = []
         self._dirty = False
     def add(self,hit):
         self._hits.append(hit)
@@ -56,18 +59,18 @@ class HitGroup(object):
     def _update(self):
         if self._dirty:
             self._hits = list(sorted(self._hits))
-            self._winners = [self._hits[0]] + [
+            self._best_hits = [self._hits[0]] + [
                 h for h in self._hits if h.nonidentical_tie(self._hits[0])]
         self._dirty = False
     def _get_hits(self):
         self._update()
         return self._hits
     hits = property(_get_hits)
-    def _get_winners(self):
+    def _get_best_hits(self):
         self._update()
-        return self._winners
+        return self._best_hits
 
-    winners = property(_get_winners)
+    best_hits = property(_get_best_hits)
 
 class HitPair(object):
     def __init__(self,hit1,hit2=None):
@@ -89,7 +92,7 @@ class HitPair(object):
 class CRBFitting(dict):
     def check(self,hit):
         length = min(hit.length,len(self)-1)
-        score = CRB.transform_evalue(hit.bitscore)
+        score = CRB.transform_evalue(hit.evalue)
         return self[length] <= score
     
 class CRB(object):
@@ -107,7 +110,6 @@ class CRB(object):
     
     @classmethod
     def transform_evalue(cls,evalue):
-        return float(evalue)
         return -1*math.log(evalue or CRB.MIN_EVALUE,10)
 
     def get_fitting(self,training_hits,output_training=None,output_fitting_data=None,output_fitting=None):
@@ -145,8 +147,6 @@ class CRB(object):
         if output_fitting is not None:
             for l in range(longest_hit+1):
                 output_fitting.write('%d\t%.3f\n' % (l,fitting[l]))
-
-
         return fitting
 
     def _get_crb_pairs(self,blastA,blastB,fittingA,fittingB,exclude_pairs,pair_fac):
@@ -181,15 +181,8 @@ class OrthologyGroup(object):
     def add_orthologs(self,species_a_orthologs=[],species_b_orthologs=[]):
         self.a = self.a.union(set(species_a_orthologs))
         self.b = self.b.union(set(species_b_orthologs))
-    def add_species_a_orthologs(self,orthologs):
-        self.add_orthologs(species_a_orthologs=orthologs)
-    def add_species_b_orthologs(self,orthologs):
-        self.add_orthologs(species_b_orthologs=orthologs)
     def update(self,other_orthology_group):
         self.add_orthologs(other_orthology_group.a,other_orthology_group.b)
-    def difference_update(self,other):
-        self.a.difference_update(other.a)
-        self.b.difference_update(other.b)
     def intersect(self,species_a_orthologs=None,species_b_orthologs=None):
         if species_a_orthologs is not None:
             self.a = self.a.intersection(set(species_a_orthologs))
@@ -232,7 +225,7 @@ class ReciprocalOrthologyGroup(object):
             ' '.join(sorted(self.crb_group.b))
         )
 
-class SpeciesStats(object):
+class GeneSet(object):
     def __init__(self,species_name):
         self.species_name = species_name
         self.total_genes = set()
@@ -241,8 +234,8 @@ class SpeciesStats(object):
 
 class RBHSummary(object):
     def __init__(self,species_a,species_b,target_list_a=None,target_list_b=None):
-        self.a = SpeciesStats(species_a)
-        self.b = SpeciesStats(species_b)
+        self.a = GeneSet(species_a)
+        self.b = GeneSet(species_b)
     def summary_header(self):
         return '\t%s\t%s\n' % (self.a.species_name,self.b.species_name)
     def summary_table(self,prefix=''):
@@ -278,12 +271,12 @@ class RBH(object):
         orthologs = collections.defaultdict(ReciprocalOrthologyGroup)
         for qname in sorted(self.blast1.keys()):
             hits = self.blast1[qname]
-            for winner in hits.winners:
-                rname = self.process_name(winner.sname)
-                if winner.sname in self.blast2:
-                    for rwinner in self.blast2[rname].winners:
-                        if self.process_name(rwinner.sname) == qname:
-                            orthologs[qname].add_reciprocal_pair(winner,rwinner)
+            for hit in hits.best_hits:
+                recip_qname = self.process_name(hit.sname)
+                if recip_qname in self.blast2:
+                    for recip_hit in self.blast2[recip_qname].best_hits:
+                        if self.process_name(recip_hit.sname) == qname:
+                            orthologs[qname].add_reciprocal_pair(hit,recip_hit)
 
         for q1,q2 in itertools.combinations(orthologs.keys(),r=2):
             if orthologs[q1].reciprocal_group.has_single_linkage(
@@ -310,14 +303,6 @@ class RBH(object):
         for ortholog in ortholog_set:
             for name in ortholog.reciprocal_group.all():
                 orthologs[name] = ortholog
-
-        if self.args.output_summary:
-            crb1 = set()
-            crb2 = set()
-            for pair in crb_pairs:
-                crb1.add(pair.hit1.qname)
-                crb2.add(pair.hit2.qname)
-            self.args.output_summary.write('%d\t%d\n' % (len(crb1),len(crb2)))
 
         for pair in crb_pairs:
             if pair.hit1.qname in orthologs:
@@ -388,7 +373,6 @@ class RBH(object):
                 self.args.output_summary.write(
                     summary_postfilter.summary_table(prefix='Target '))
 
-         
         if not self.args.silent:
             if not self.args.no_header:
                 print '%s RBB Genes\t%s CRB Genes\t%s RBB Genes\t%s CRB Genes' % (
@@ -431,7 +415,6 @@ class RBH(object):
                             hits''')
         parser.add_argument('--no-header',action='store_true',help='''Do not
                             inlcude a header line in the output''')
-
         # hidden arguments
         '''Output all evalue and length values used for training the CRB hits'''
         parser.add_argument('--output-evalue-table',metavar='TAB',
