@@ -226,23 +226,38 @@ class ReciprocalOrthologyGroup(object):
         )
 
 class GeneSet(object):
-    def __init__(self,species_name):
+    def __init__(self,species_name,genes):
         self.species_name = species_name
-        self.total_genes = set()
+        self.total_genes = set(genes)
         self.rbh_genes = set()
         self.crb_genes = set()
 
 class RBHSummary(object):
-    def __init__(self,species_a,species_b,target_list_a=None,target_list_b=None):
-        self.a = GeneSet(species_a)
-        self.b = GeneSet(species_b)
+    def __init__(self,species_a,species_b,total_genes_a,total_genes_b,
+                 ortholog_set):
+        self.a = GeneSet(species_a,total_genes_a)
+        self.b = GeneSet(species_b,total_genes_b)
+        self.rbh_groups = 0
+        self.crb_groups = 0
+        for ortholog in ortholog_set:
+            self.a.rbh_genes.update(ortholog.reciprocal_group.a)
+            self.b.rbh_genes.update(ortholog.reciprocal_group.b)
+            self.a.crb_genes.update(ortholog.crb_group.a)
+            self.b.crb_genes.update(ortholog.crb_group.b)
+            if ortholog.reciprocal_group.a and ortholog.reciprocal_group.b:
+                self.rbh_groups += 1
+            if ortholog.crb_group.a or ortholog.crb_group.b:
+                self.crb_groups += 1
+        self.a.crb_genes.difference_update(self.a.rbh_genes)
+        self.b.crb_genes.difference_update(self.a.rbh_genes)
+
     def summary_header(self):
-        return '\t%s\t%s\n' % (self.a.species_name,self.b.species_name)
+        return '\t%s Genes\t%s Genes\tOrthology Groups\n' % (self.a.species_name,self.b.species_name)
     def summary_table(self,prefix=''):
-        return '%sGenes\t%d\t%d\n%sRBB Genes\t%d\t%d\n%sCRB Genes\t%d\t%d\n' % (
+        return '%sGenes\t%d\t%d\t-\n%sRBB\t%d\t%d\t%d\n%sCRB\t%d\t%d\t%d\n' % (
             prefix,len(self.a.total_genes),len(self.b.total_genes),
-            prefix,len(self.a.rbh_genes),len(self.b.rbh_genes),
-            prefix,len(self.a.crb_genes),len(self.b.crb_genes))
+            prefix,len(self.a.rbh_genes),len(self.b.rbh_genes),self.rbh_groups,
+            prefix,len(self.a.crb_genes),len(self.b.crb_genes),self.crb_groups)
 
 class RBHArgumentParser(argparse.ArgumentParser):
     def error(self,message):
@@ -256,6 +271,7 @@ class RBH(object):
         self.blast1 = self.qualifying_hits(self.args.BLAST_FILE1)
         self.blast2 = self.qualifying_hits(self.args.BLAST_FILE2)
 
+    '''
     def _get_summary(self,ortholog_set,total_genes1,total_genes2):
         summary = RBHSummary(self.args.SPECIES_NAME1,self.args.SPECIES_NAME2)
         summary.a.total_genes.update(total_genes1)
@@ -268,6 +284,7 @@ class RBH(object):
         summary.a.crb_genes.difference_update(summary.a.rbh_genes)
         summary.b.crb_genes.difference_update(summary.b.rbh_genes)
         return summary
+    '''
 
     def _get_rbh(self):
         orthologs = collections.defaultdict(ReciprocalOrthologyGroup)
@@ -361,8 +378,9 @@ class RBH(object):
             ortholog_set = self._get_crb(ortholog_set)
 
         if self.args.output_summary:
-            summary_prefilter = self._get_summary(
-                ortholog_set, self.blast1.keys(), self.blast2.keys())
+            summary_prefilter = RBHSummary(
+                self.args.SPECIES_NAME1,self.args.SPECIES_NAME2,
+                self.blast1.keys(), self.blast2.keys(), ortholog_set)
             self.args.output_summary.write(summary_prefilter.summary_header())
             self.args.output_summary.write(summary_prefilter.summary_table())
             
@@ -370,8 +388,9 @@ class RBH(object):
             ortholog_set = self._filter_targets(ortholog_set)
 
             if self.args.output_summary:
-                summary_postfilter = self._get_summary(
-                    ortholog_set,self.args.target_list1,self.args.target_list2)
+                summary_postfilter = RBHSummary(
+                    self.args.SPECIES_NAME1,self.args.SPECIES_NAME2,
+                    self.args.target_list1,self.args.target_list2,ortholog_set)
                 self.args.output_summary.write(
                     summary_postfilter.summary_table(prefix='Target '))
 
