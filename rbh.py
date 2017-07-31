@@ -271,21 +271,6 @@ class RBH(object):
         self.blast1 = self.qualifying_hits(self.args.BLAST_FILE1)
         self.blast2 = self.qualifying_hits(self.args.BLAST_FILE2)
 
-    '''
-    def _get_summary(self,ortholog_set,total_genes1,total_genes2):
-        summary = RBHSummary(self.args.SPECIES_NAME1,self.args.SPECIES_NAME2)
-        summary.a.total_genes.update(total_genes1)
-        summary.b.total_genes.update(total_genes2)
-        for ortholog in ortholog_set:
-            summary.a.rbh_genes.update(ortholog.reciprocal_group.a)
-            summary.b.rbh_genes.update(ortholog.reciprocal_group.b)
-            summary.a.crb_genes.update(ortholog.crb_group.a)
-            summary.b.crb_genes.update(ortholog.crb_group.b)
-        summary.a.crb_genes.difference_update(summary.a.rbh_genes)
-        summary.b.crb_genes.difference_update(summary.b.rbh_genes)
-        return summary
-    '''
-
     def _get_rbh(self):
         orthologs = collections.defaultdict(ReciprocalOrthologyGroup)
         for qname in sorted(self.blast1.keys()):
